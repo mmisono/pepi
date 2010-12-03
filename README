@@ -1,0 +1,32 @@
+pepi
+
+terminal interface for skype
+
+
+requirements:
+(1) Python
+(2) Skype4Py [http://sourceforge.net/projects/skype4py/]
+(3) Urwid [http://excess.org/urwid/]
+
+
+key mapping:
+
+insert mode
+esc    go normal mode
+enter  send message
+
+normal mode
+i      go insert mode
+m      display current chat members 
+u      display user list
+c      change focus to chatname list
+l      change focus to message list
+j      down
+k      up
+q      quit
+0-9    change chat
+enter  change chat / create chat / open url
+
+insert mode / normal mode
+ctrl-n,ctrl-p  change chat
+
