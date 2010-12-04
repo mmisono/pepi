@@ -45,16 +45,7 @@ class MyListBox(urwid.ListBox):
         if key == 'ctrl d':
             self.keypress(size,'page down')
         elif key == 'k':
-            save_focus = self.get_focus()
             self.keypress(size,'up')
-            focus = self.get_focus()
-            if save_focus != focus:
-                try:
-                    # It's ugly...
-                    focus = focus[0].get_focus()   # focus is Pile?
-                    focus.set_focus(len(focus.widget_list)-1)
-                except:
-                    pass
         elif key == 'ctrl u':
             self.keypress(size,'page up')
         elif key == 'g':
@@ -65,10 +56,13 @@ class MyListBox(urwid.ListBox):
             return super(MyListBox,self).keypress(size,key)
 
     def set_focus_bottom(self):
-        if isinstance(self.body[-1],urwid.Divider):
-            self.body.set_focus(len(self.body)-2)
-        else:
-            self.body.set_focus(len(self.body)-1)
+        try:
+            if isinstance(self.body[-1],urwid.Divider):
+                self.body.set_focus(len(self.body)-2)
+            else:
+                self.body.set_focus(len(self.body)-1)
+        except:
+            pass
 
     def set_focus_top(self):
         self.body.set_focus(0)
@@ -119,14 +113,14 @@ class SelectableText(urwid.Text):
 # | | | |                 | | | | | +--urwid.Pile--------------------+ | | |
 # | | | +-----------------+ | | | | | username                  date | | | |
 # | | |                     | | | | |--------------------------------+ | | |
-# | | |                     | | | | | +--urwid.Pile----------------+ | | | |
-# | | |                     | | | | | | +------------------------+ | | | | |
-# | | |                     | | | | | | |  message          date | | | | | |
-# | | |                     | | | | | | +------------------------+ | | | | |
-# | | +---------------------+ | | | | | +------------------------+ | | | | |
-# | +-------------------------+ | | | | |  message          date | | | | | |
-# | | +--urwid.ListBox------+ | | | | | +------------------------+ | | | | |
-# | | | +-----------------+ | | | | | +----------------------------+ | | | |
+# | | |                     | | | | | message                   date | | | |
+# | | |                     | | | | +--------------------------------+ | | |
+# | | |                     | | | | | message                   date | | | |
+# | | |                     | | | | +--------------------------------+ | | |
+# | | +---------------------+ | | | |                                | | | |
+# | +-------------------------+ | | |                                | | | |
+# | | +--urwid.ListBox------+ | | | |                                | | | |
+# | | | +-----------------+ | | | | |                                | | | |
 # | | | | username/status | | | | | +--------------------------------+ | | |
 # | | | +-----------------+ | | | |                                    | | |
 # | | | |                 | | | | |                                    | | |
@@ -165,29 +159,28 @@ class SelectableText(urwid.Text):
 class ChatListBox(MyListBox):
     def __init__(self):
         body = urwid.SimpleListWalker([])
+        self.prev_name = None
+        self.prev_date = None
         super(ChatListBox,self).__init__(body)
 
     def append_message(self,name,date,message):
-        if len(self.body) > 0 :
-            prev_user = self.body[-1].widget_list[0]
-            prev_user = prev_user.widget_list[0].get_text()[0]
+        name_ = name.get_text()
+        date_ = date.get_text()
+        if self.prev_name != name_:
+            self.prev_name = name_
+            self.prev_date = date_
+            name_and_date = urwid.Columns([name,('fixed',11,date)])
+            # copy
+            date = urwid.AttrMap(urwid.Text(date.get_text()),\
+                                                date.get_attr_map())
+            self.body.append(name_and_date)
+        if date_ == self.prev_date:
+            date.set_attr_map({None:"invisible"})
         else:
-            prev_user = None
-        if  prev_user == name.get_text()[0]:
-            messages  = self.body[-1].widget_list[1]
-            prev_date = messages.widget_list[-1].widget_list[1]
-            if date.get_text() ==  prev_date.get_text():
-                date.set_attr_map({None:"invisible"})
-            messages.widget_list.append(urwid.Columns(\
-                                [message,("fixed",11,date)]))
-            messages.item_types.append(("weight",1))
-        else:
-            name_and_date = urwid.Columns([name\
-                    ,('fixed',11,date)])
-            date_ = MyAttrMap(urwid.Text(date.get_text()[0]),"invisible")
-            message = urwid.Columns([message,('fixed',11,date_)])
-            self.body.append(urwid.Pile([name_and_date,\
-                                         urwid.Pile([message])]))
+            self.prev_date = date_
+        message = urwid.Columns([message,('fixed',11,date)])
+        self.body.append(message)
+
         self.set_focus_bottom()
 
 
