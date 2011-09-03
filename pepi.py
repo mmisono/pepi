@@ -459,7 +459,12 @@ class Pepi():
     def get_chat(self):
         self.skypechats = []
         # ActiveChats[0].Name contains all active chat name, probably bug..
-        chatnames = self.skype.ActiveChats[0].Name.split(' ')
+#        chatnames = self.skype.ActiveChats[0].Name.split(' ')
+
+        chatnames = []
+        for i in xrange(self.skype.RecentChats.Count):
+            chatnames.append(self.skype.RecentChats[i].Name)
+
         chatnames = sorted(set(chatnames),key=chatnames.index)
         self.skypechats = [Skype4Py.chat.Chat(self.skype,c) \
                                         for c in chatnames]
