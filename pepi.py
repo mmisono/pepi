@@ -4,7 +4,7 @@
 # Author: mfumi <m.fumi760@gmail.com>
 # Version: 0.0.1
 # License: NEW BSD LICENSE
-#  Copyright (c) 2010, mfumi
+#  Copyright (c) 2010-2011, mfumi
 #  All rights reserved.
 #
 #  Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -27,10 +27,18 @@ import datetime
 import re
 import time
 import webbrowser
+import os
+import sqlite3
+import shutil
 
 import Skype4Py
 import urwid
 
+try:
+    import Growl
+    notify = True
+except:
+    notify = False
 
 ##############################################################################
 
@@ -136,14 +144,14 @@ class SelectableText(urwid.Text):
 # +------------------------------------------------------------------------+
 #
 # chatname 
-# +-urwid.Columns----------------------------------------------------+
-# | number(urwid.Text) | unread flag(urwid.Text) | title(urwid.Text) |
-# +------------------------------------------------------------------+
+# +-urwid.Columns------------------------------------------------------------------------------+
+# | number(urwid.Text) | notify flag(urwid.Text) | unread flag(urwid.Text) | title(urwid.Text) |
+# +--------------------------------------------------------------------------------------------+
 #
 # username/status
-# +-urwid.Columns-----------------------------+
-# | username(urwid.Text) | status(urwid.Text) |
-# +-------------------------------------------+
+# +-urwid.Columns-------------------------------------------------------+
+# | notify flag(urwid.Text) | username(urwid.Text) | status(urwid.Text) |
+# +---------------------------------------------------------------------+
 #
 # username/date
 # +-urwid.Columns---------------------------+
@@ -366,6 +374,8 @@ class ChatView(urwid.Columns):
                 if focus == self.chatnames:
                     if key == 'enter':
                         self.change_chat(focus.get_focus()[1]/2)
+                    if key == 'n':
+                        self.pepi.toggle_notify(focus.get_focus()[1]/2,'chat')
                     else:
                         return super(ChatView,self).keypress(size,key)
                 else:
@@ -373,8 +383,14 @@ class ChatView(urwid.Columns):
                         # create chat
                         user = focus.get_focus()[0]
                         self.pepi.create_chat_with(user)
+                    if key == 'n':
+                        self.pepi.toggle_notify(focus.get_focus()[0],'member')
                     else:
-                        return super(ChatView,self).keypress(size,key)
+                        # something goes wrong...
+                        try:
+                            return super(ChatView,self).keypress(size,key)
+                        except ValueError:
+                            pass
             else:
                 return super(ChatView,self).keypress(size,key)
 
@@ -411,7 +427,7 @@ class ChatView(urwid.Columns):
         chatname = self.chatnames.body[new*2]
         if self.get_chatmembers_display() != self.user_list:
             self.change_chatmember_display(self.chatmembers)
-        chatname.widget_list[1].set_text(" ")
+        chatname.widget_list[2].set_text(" ")
 
         self.chatnames.set_focus(new*2)
         self.pepi.loop.draw_screen()
@@ -449,12 +465,54 @@ class Pepi():
         self.make_chatnamelist()
         self.make_view()
         self.set_callback_func()
+        self.notify_chats = []
+        self.notify_names = []
+
+        if notify:
+            self.get_avatar_images()
+            self.configure_growl()
 
     def start_skype(self):
         if not self.skype.Client.IsRunning:
             self.skype.Client.Start()
             while not self.skype.Client.IsRunning:
                 time.sleep(2)
+
+    # only mac os x
+    def get_avatar_images(self):
+        db_path = os.path.expanduser(os.path.join(
+                        '~/Library/Application Support/Skype/',
+                        self.skype.CurrentUserHandle,'main.db'))
+        
+        tmp_dir = '/tmp/skype'
+        tmp_db = os.path.join(tmp_dir,"main.db")
+        
+        if not os.path.exists(tmp_dir):
+            os.mkdir(tmp_dir)
+        shutil.copyfile(db_path,tmp_db)
+        
+        conn = sqlite3.connect(tmp_db)
+        cursor = conn.execute("SELECT skypename,avatar_image from Contacts")
+    
+        self.images_of_avatars = dict()
+        
+        for name,avatar in cursor.fetchall():
+            img_name = os.path.join(tmp_dir,name+".jpg")
+            img = open(img_name,"wb")
+            if avatar != None:
+                # the beginning of avatar images is a NULL byte 
+                # (i don't know why...)
+                img.write(avatar[1:])
+                img.close()
+                self.images_of_avatars[name] = Growl.Image.imageFromPath(img_name)
+    
+        cursor.close()
+        conn.close()
+
+    def configure_growl(self):
+        self.growl = Growl.GrowlNotifier(applicationName = 'SkypeNotify',
+                              notifications = ['Message','Status'])
+        self.growl.register()
 
     def get_chat(self):
         self.skypechats = []
@@ -473,18 +531,21 @@ class Pepi():
         return self.skype.CurrentUserProfile.FullName
 
     def make_userlist(self):
-        def append_member(index,handle,name,status):
+        def append_member(index,handle,name,status,notify_flag):
             if name == self.myname:
                 attr = "me"
             else:
                 attr = self.attrs[index%len(self.attrs)]
             name_ = MyAttrMap(SelectableText(name),attr,"reveal focus")
             status_ = MyAttrMap(urwid.Text(status),status)
-            member = urwid.Columns([name_,("fixed",7,status_)])
-            self.user_list.update({handle:[member,name_,status_]})
+            notify_flag_ =  MyAttrMap(urwid.Text(notify_flag),attr)
+            member = urwid.Columns([("fixed",1,notify_flag_),name_,("fixed",7,status_)])
+            
+            self.user_list.update({handle:[member,name_,status_,notify_flag_]})
             self.user_listwalker.append(member)
 
-        # user_list -> {handle:[urwid.Text(fullname),urwid.Text(status]}
+        # user_list -> {handle:[urwid.Columns(member),urwid.Text(fullname),
+        #               urwid.Text(status),urwid.Text(notify flag)]}
         self.user_list = {}
         self.user_listwalker = urwid.SimpleListWalker([])
         self.chatmembers_list = []
@@ -496,7 +557,7 @@ class Pepi():
             status = member.OnlineStatus
             if name == "":
                 name = handle
-            append_member(i,handle,name,status)
+            append_member(i,handle,name,status,' ')
 
         for chat in self.skypechats: 
             members = urwid.SimpleListWalker([])
@@ -508,7 +569,7 @@ class Pepi():
                     name = handle
                 if not self.user_list.has_key(handle):
                     # someone not my friend
-                    append_member(0,handle,name,status)
+                    append_member(0,handle,name,status,' ')
                 members.append(self.user_list[handle][0])
             self.chatmembers_list.append(MyLineBox(MyListBox(members)))
 
@@ -525,6 +586,7 @@ class Pepi():
             # chatnumber,read flag,chatname
             chatname = urwid.Columns([\
                     ("fixed",len(str(i))+1,urwid.Text(str(i))),\
+                    ("fixed",1,urwid.Text(" ")),\
                     ("fixed",1,urwid.Text(" ")),\
                     SelectableText(self.skypechats[i].FriendlyName)])
             self.chatnames.append(MyAttrMap(chatname,'bg',"reveal focus"))
@@ -610,6 +672,7 @@ class Pepi():
                ("fixed",len(str((len(self.skypechats)-1)))+1,\
                 urwid.Text(str(len(self.skypechats)-1))),\
                ("fixed",1,urwid.Text(" ")),\
+               ("fixed",1,urwid.Text(" ")),\
                urwid.Text(chat.FriendlyName)])
        self.chatnames.body.append(\
                MyAttrMap(chatname,'bg',None))
@@ -640,7 +703,9 @@ class Pepi():
                     name_ = urwid.Text(name)
                     status = user.OnlineStatus
                     status_ = MyAttrMap(urwid.Text(status),status)
-                    member = urwid.Columns([name_,\
+                    member = urwid.Columns([\
+                            ("fixed",1,urwid.Text(" ")),\
+                             name_,\
                             ("fixed",len(status),status_)])
                     self.user_list.update( {handle:[\
                             len(self.user_listwalker),name_,status_]})
@@ -652,19 +717,48 @@ class Pepi():
             if value[0] == user:
                 self.skype.CreateChatWith(key)
                 return
-            
+
+    def toggle_notify(self,focus,type_):
+        if type_ == 'chat':
+            chatname = self.chatnames.body[focus*2]
+            name = self.skypechats[focus].Name
+            if name in self.notify_chats:
+                self.notify_chats.remove(name)
+                chatname.widget_list[1].set_text(' ')
+            else:
+                self.notify_chats.append(name)
+                chatname.widget_list[1].set_text('/')
+
+        elif type_ == 'member':
+            for key,value in self.user_list.iteritems():
+                if value[0] == focus:
+                    name = key
+                    if name in self.notify_names:
+                        self.notify_names.remove(name)
+                        self.user_list[name][3].set_text(' ')
+                    else:
+                        self.notify_names.append(name)
+                        self.user_list[name][3].set_text('/')
+                    break
 
     def OnMessageStatus(self,message,status):
         if status == 'RECEIVED' and message.Body != "":
             if message.Chat not in self.skypechats:
                 self.append_chat(message.Chat)
-
             index = self.skypechats.index(message.Chat)
             self.append_message(message,index)
+            if notify:
+                if message.Chat.Name in self.notify_chats or \
+                   message.FromHandle in self.notify_names :
+                        self.growl.notify(noteType = 'Message',
+                                 title = message.FromDisplayName,
+                                 description = message.Body,
+                                 icon = self.images_of_avatars.get(message.FromHandle),
+                                 sticky = False)
             if message.Chat != self.view.currentchat:
                 # set unread flag
                 chatname = self.chatnames.body[index*2]
-                chatname.widget_list[1].set_text("*")
+                chatname.widget_list[2].set_text("*")
                 chatname.set_attr_map({None:"unread"})
             self.loop.draw_screen()
 
@@ -680,6 +774,12 @@ class Pepi():
         self.user_list[handle][2].set_text(status)
         self.user_list[handle][2].set_attr_map({None:status})
         self.loop.draw_screen()
+        if notify and user.Handle in self.notify_names:
+            self.growl.notify(noteType = 'Status',
+                         title = user.FullName,
+                         description = status,
+                         icon = self.images_of_avatars.get(user.Handle),
+                         sticky = False)
 
 
 if __name__ == '__main__':
